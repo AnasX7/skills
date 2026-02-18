@@ -82,7 +82,6 @@ AuthModule.forRoot({
 | ------------------- | --------------------------------------------------- |
 | `@AllowAnonymous()` | No authentication required                          |
 | `@OptionalAuth()`   | Auth optional, session may be null                  |
-| `@Roles(['admin'])` | Requires specific role (uses access control plugin) |
 
 **Apply to class or method:**
 
@@ -120,6 +119,71 @@ async getProfile(@Session() session: UserSession) {
   return session;
 }
 ```
+
+### Role-Based Access Control
+
+Use separate decorators for system-level and organization-level authorization:
+
+| Decorator | Checks | Use Case |
+| --------- | ------ | -------- |
+| `@Roles([...])` | `user.role` only | System-level roles via Better Auth admin plugin |
+| `@OrgRoles([...])` | Organization member role only | Org-scoped roles via Better Auth organization plugin |
+
+**IMPORTANT:** These decorators are intentionally separate to prevent privilege escalation.
+`@Roles()` checks only `user.role` (system roles) and does not check organization member roles.
+
+#### `@Roles()` - System-Level Roles
+
+Use for system-wide admin protection from Better Auth's admin plugin:
+
+```ts
+import { Controller, Get } from '@nestjs/common'
+import { Roles } from '@thallesp/nestjs-better-auth'
+
+@Controller('admin')
+export class AdminController {
+  @Roles(['admin'])
+  @Get('dashboard')
+  async adminDashboard() {
+    // Requires user.role = 'admin'
+    // Organization admins cannot access this route unless they are system admins
+    return { message: 'System admin dashboard' }
+  }
+}
+
+// Or as a class decorator
+@Roles(['admin'])
+@Controller('admin')
+export class AdminRoutesController {}
+```
+
+#### `@OrgRoles()` - Organization-Level Roles
+
+Use for org-scoped protection. Requires active organization context (`activeOrganizationId`):
+
+```ts
+import { Controller, Get } from '@nestjs/common'
+import { OrgRoles, Session, UserSession } from '@thallesp/nestjs-better-auth'
+
+@Controller('org')
+export class OrgController {
+  @OrgRoles(['owner', 'admin'])
+  @Get('settings')
+  async getOrgSettings(@Session() session: UserSession) {
+    // Requires active org + member role owner/admin
+    return { orgId: session.session.activeOrganizationId }
+  }
+
+  @OrgRoles(['owner'])
+  @Get('billing')
+  async getOrgBilling() {
+    return { message: 'Billing settings' }
+  }
+}
+```
+
+Both decorators accept any role strings you define. Organization defaults are typically
+`owner`, `admin`, and `member` unless customized in Better Auth organization plugin config.
 
 ### Request Object Access
 
@@ -223,6 +287,7 @@ export class AppModule {}
 4. **WebSocket** - Global guard doesn't apply; manually add `@UseGuards(AuthGuard)`
 5. **Plugin types** - Use `AuthService<typeof auth>` for type-safe plugin method access
 6. **Fastify** - Beta support only; may have issues
+7. **RBAC separation** - Use `@Roles()` for system roles and `@OrgRoles()` for org roles; do not mix assumptions between them
 
 ---
 
@@ -243,6 +308,7 @@ import {
   AllowAnonymous,
   OptionalAuth,
   Roles,
+  OrgRoles,
 } from '@thallesp/nestjs-better-auth'
 
 // Hooks
