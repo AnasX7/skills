@@ -1,4 +1,4 @@
-# Anas Agent Skills
+# Agent Skills
 
 Reusable skills for AI coding agents.
 
