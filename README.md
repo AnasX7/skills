@@ -1,5 +1,7 @@
 # Agent Skills
 
+[![Skills Compatibility](https://github.com/AnasX7/skills/actions/workflows/skills-compat.yml/badge.svg)](https://github.com/AnasX7/skills/actions/workflows/skills-compat.yml)
+
 Reusable skills for AI coding agents.
 
 This repo is tool-agnostic: the same skill folders can be used with Codex, Claude Code, or any agent framework that supports file-based skills/instructions.
@@ -17,6 +19,15 @@ This repo is tool-agnostic: the same skill folders can be used with Codex, Claud
 - Supporting assets/scripts for specific skills
 
 ## Quick Start
+
+1. Install directly from GitHub with the Skills CLI:
+   - `npx skills add AnasX7/skills`
+   - or `npx skills add https://github.com/AnasX7/skills`
+2. Restart your agent tool (if required) so it reloads skills.
+
+Note: the command is `skills` (plural), not `skill`.
+
+Manual fallback (if your environment does not support `skills add`):
 
 1. Clone this repo:
    - `git clone https://github.com/AnasX7/skills.git`
