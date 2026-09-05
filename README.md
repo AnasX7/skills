@@ -1,48 +1,34 @@
 # Agent Skills
 
-Reusable skills for AI coding agents.
+Portable, versioned skills for Codex, Antigravity, and other file-based coding agents.
 
-This repo is tool-agnostic: the same skill folders can be used with Codex, Claude Code, or any agent framework that supports file-based skills/instructions.
+This repository is the portable snapshot of my personal global skills. It currently contains:
 
-## Why This Repo Exists
+- Direct user skills from `~/.agents/skills`, including skills installed with the Vercel Skills CLI.
+- Portable, non-system Codex skills from `~/.codex/skills`.
 
-- Keep a portable, versioned backup of my skills
-- Reuse the same skill set across multiple laptops
-- Track improvements and updates in git
+Codex system skills, plugin caches, MCP configuration, and plugin hooks are intentionally not copied here. Install those separately when they are needed.
 
-## What Is Inside
+## Install on a new device
 
-- Skill folders with `SKILL.md` instructions
-- System and custom skills
-- Supporting assets/scripts for specific skills
+```bash
+git clone git@github.com:AnasX7/skills.git
+cd skills
+mkdir -p ~/.agents/skills
+rsync -a --exclude='.git/' --exclude='/README.md' ./ ~/.agents/skills/
+```
 
-## Quick Start
+Restart the agent if the new skills do not appear immediately.
 
-1. Clone this repo:
-   - `git clone https://github.com/AnasX7/skills.git`
-2. Copy the skill folders to your agent's skills directory.
-3. Restart your agent tool (if required) so it reloads skills.
+## Update the repository
 
-## Common Skill Directories
+After installing or updating direct global skills, synchronize them back into this repository, review the diff, and commit it:
 
-Use the path that matches your agent environment:
+```bash
+rsync -a --delete --exclude='.git/' --exclude='/README.md' ~/.agents/skills/ ./
+git add .
+git commit -m "Sync global skills"
+git push origin main
+```
 
-- Codex: `~/.codex/skills` (Windows: `C:\Users\<you>\.codex\skills`)
-- Claude Code: `~/.claude/skills`
-- Other agents: your platform's configured skills/instructions directory
-
-## Sync Workflow Across Machines
-
-1. On machine A, update skills and commit:
-   - `git add .`
-   - `git commit -m "Update skills"`
-   - `git push origin main`
-2. On machine B, pull latest:
-   - `git pull origin main`
-3. Re-copy or sync files into that machine's agent skills directory.
-
-## Notes
-
-- Some skills are process-oriented (planning, debugging, reviews).
-- Some skills are domain-oriented (auth, UI, framework-specific work).
-- Keep skill names and folder structure stable to avoid broken references.
+Keep custom skills such as `nestjs-better-auth` in this repository so they are included in the next-device snapshot.

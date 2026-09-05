@@ -1,13 +1,13 @@
 ---
 name: nestjs-better-auth
-description: Use when integrating Better Auth with NestJS applications - setting up authentication, route protection, guards, decorators, and hooks in NestJS
+description: "Use when integrating Better Auth (>=1.5.0) with NestJS through @thallesp/nestjs-better-auth, including body-parser setup, guards, sessions, RBAC, permissions, hooks, GraphQL, WebSockets, Fastify, and AuthService."
 ---
 
 # NestJS Better Auth Integration
 
 **Comprehensive integration of [Better Auth](https://www.better-auth.com/) for NestJS applications using [@thallesp/nestjs-better-auth](https://www.npmjs.com/package/@thallesp/nestjs-better-auth).**
 
-**REQUIRED:** Better Auth >= 1.3.8. Older versions are unsupported.
+**REQUIRED:** Better Auth >= 1.5.0. Older versions are deprecated and unsupported.
 
 ---
 
@@ -15,10 +15,10 @@ description: Use when integrating Better Auth with NestJS applications - setting
 
 | Package      | `@thallesp/nestjs-better-auth`             |
 | ------------ | ------------------------------------------ |
-| Install      | `npm install @thallesp/nestjs-better-auth` |
+| Install      | `npm install better-auth @thallesp/nestjs-better-auth` |
 | Body Parser  | **MUST disable** in `main.ts`              |
 | Global Guard | Enabled by default (all routes protected)  |
-| Fastify      | Beta support - may have issues             |
+| Fastify      | Supported with parser/CORS caveats         |
 
 ---
 
@@ -49,10 +49,23 @@ import { AuthModule } from '@thallesp/nestjs-better-auth'
 import { auth } from './auth'
 
 @Module({
-  imports: [AuthModule.forRoot({ auth })],
+  imports: [
+    AuthModule.forRoot({
+      auth,
+      bodyParser: {
+        json: { enabled: true },
+        urlencoded: { enabled: true, extended: true },
+        rawBody: true,
+      },
+    }),
+  ],
 })
 export class AppModule {}
 ```
+
+The module re-adds JSON and URL-encoded parsers for non-auth routes by default. `bodyParser.json` and `bodyParser.urlencoded` accept parser options plus an optional `enabled` flag. Set `bodyParser.rawBody: true` when webhook verification or another integration needs `req.rawBody`.
+
+Because Nest's built-in parser is disabled, `rawBody: true` passed to `NestFactory.create()` has no effect; configure it through `AuthModule.forRoot()` instead. On Fastify, `urlencoded: { extended: true }` requires the optional `qs` peer dependency for nested form parsing.
 
 ---
 
@@ -62,7 +75,15 @@ export class AppModule {}
 AuthModule.forRoot({
   auth,
   disableTrustedOriginsCors: false, // Disable auto CORS for trustedOrigins
-  disableBodyParser: false, // Handle body parsing manually
+  bodyParser: {
+    json: { enabled: true },
+    urlencoded: { enabled: true, extended: true },
+    rawBody: false,
+  },
+  // Deprecated: prefer bodyParser.json/urlencoded.enabled
+  disableBodyParser: false,
+  // Deprecated: prefer bodyParser.rawBody
+  enableRawBodyParser: false,
   disableGlobalAuthGuard: false, // Disable global guard (apply per route)
   disableControllers: false, // Handle routes manually
   middleware: (req, res, next) => {
@@ -72,11 +93,33 @@ AuthModule.forRoot({
 })
 ```
 
+| Option | Default | Use |
+| --- | --- | --- |
+| `disableTrustedOriginsCors` | `false` | Disable automatic Better Auth CORS for configured `trustedOrigins`. |
+| `bodyParser` | Re-adds JSON and URL-encoded parsers | Configure parser options, per-parser `enabled`, and `rawBody`. |
+| `disableBodyParser` | `false` | Deprecated. Prefer `bodyParser.json.enabled` and `bodyParser.urlencoded.enabled`. |
+| `enableRawBodyParser` | `false` | Deprecated. Prefer `bodyParser.rawBody`. |
+| `disableGlobalAuthGuard` | `false` | Stop registering the global `AuthGuard`; apply it manually or through `APP_GUARD`. |
+| `disableControllers` | `false` | Do not register the library's controllers when routes are handled manually. |
+| `middleware` | `undefined` | Wrap the Better Auth handler with `(req, res, next)`, useful for request-scoped libraries such as MikroORM. |
+
+If `disableBodyParser: true` is still used, both parsers are disabled unless explicitly re-enabled in `bodyParser`.
+
+---
+
+## Fastify and CORS
+
+When `trustedOrigins` is configured, the module applies Better Auth CORS headers to auth routes. On Fastify, Better Auth routes are mounted through middleware, so application-level `@fastify/cors` does not fully cover them.
+
+The automatic Fastify CORS fallback supports array-based `trustedOrigins`. Function-based `trustedOrigins` remain unsupported by that fallback; set `disableTrustedOriginsCors: true` and manage auth-route CORS yourself in that case.
+
 ---
 
 ## Route Protection
 
 **Default:** All routes protected globally. Use decorators to override:
+
+The global guard applies to REST routes and GraphQL resolvers/mutations. GraphQL uses the same `@AllowAnonymous()` and `@OptionalAuth()` overrides.
 
 | Decorator           | Effect                                              |
 | ------------------- | --------------------------------------------------- |
@@ -97,7 +140,7 @@ export class AdminController {}
 
 ### WebSocket Protection
 
-Must manually apply `@UseGuards(AuthGuard)` at Gateway or Message level:
+WebSockets are supported, but you must manually apply `@UseGuards(AuthGuard)` at the Gateway or Message level. `@AllowAnonymous()` and `@OptionalAuth()` can then override authentication requirements.
 
 ```ts
 @WebSocketGateway({ path: '/ws', namespace: 'test' })
@@ -127,7 +170,8 @@ Use separate decorators for system-level and organization-level authorization:
 | Decorator | Checks | Use Case |
 | --------- | ------ | -------- |
 | `@Roles([...])` | `user.role` only | System-level roles via Better Auth admin plugin |
-| `@OrgRoles([...])` | Organization member role only | Org-scoped roles via Better Auth organization plugin |
+| `@RequireActiveOrg()` | `session.activeOrganizationId` | Routes that only need active organization context |
+| `@OrgRoles([...])` | Active organization plus member role | Org-scoped roles via Better Auth organization plugin |
 
 **IMPORTANT:** These decorators are intentionally separate to prevent privilege escalation.
 `@Roles()` checks only `user.role` (system roles) and does not check organization member roles.
@@ -157,6 +201,24 @@ export class AdminController {
 export class AdminRoutesController {}
 ```
 
+#### `@RequireActiveOrg()` - Active Organization Only
+
+Use `@RequireActiveOrg()` when a route needs an authenticated user with an active organization but does not require a specific member role:
+
+```ts
+import { Controller, Get } from '@nestjs/common'
+import { RequireActiveOrg, Session, UserSession } from '@thallesp/nestjs-better-auth'
+
+@RequireActiveOrg()
+@Controller('projects')
+export class ProjectsController {
+  @Get()
+  listProjects(@Session() session: UserSession) {
+    return { orgId: session.session.activeOrganizationId }
+  }
+}
+```
+
 #### `@OrgRoles()` - Organization-Level Roles
 
 Use for org-scoped protection. Requires active organization context (`activeOrganizationId`):
@@ -182,8 +244,43 @@ export class OrgController {
 }
 ```
 
-Both decorators accept any role strings you define. Organization defaults are typically
+`@RequireActiveOrg()` and `@OrgRoles()` require active organization context. Both role decorators accept any role strings you define. Organization defaults are typically
 `owner`, `admin`, and `member` unless customized in Better Auth organization plugin config.
+
+### Permission-Based Access Control
+
+Use @UserHasPermission() for system-level permissions configured through Better Auth's admin plugin. Use @MemberHasPermission() for organization-member permissions configured through the organization plugin; it requires an active organization.
+
+~~~~ts
+import { Controller, Post } from '@nestjs/common'
+import {
+  MemberHasPermission,
+  UserHasPermission,
+} from '@thallesp/nestjs-better-auth'
+
+@Controller('projects')
+export class ProjectController {
+  @UserHasPermission({
+    permission: { project: ['create', 'update'] },
+  })
+  @Post()
+  createProject() {}
+
+  @UserHasPermission({
+    permissions: { project: ['delete'], sale: ['create'] },
+  })
+  @Post(':id/delete')
+  deleteProject() {}
+
+  @MemberHasPermission({
+    permissions: { project: ['create', 'update'] },
+  })
+  @Post('organization')
+  createOrganizationProject() {}
+}
+~~~~
+
+@UserHasPermission() accepts a single permission, multiple permissions, an optional server-only role, and an optional userId (defaulting to the current user). @MemberHasPermission() requires permissions matching the organization's access-control statement.
 
 ### Request Object Access
 
@@ -279,15 +376,62 @@ export class AppModule {}
 
 ---
 
+## Database Hook Decorators
+
+Set databaseHooks: {} in betterAuth() before using database lifecycle decorators:
+
+~~~~ts
+export const auth = betterAuth({
+  databaseHooks: {},
+})
+~~~~
+
+Use @DatabaseHook() with @BeforeCreate, @AfterCreate, @BeforeUpdate, @AfterUpdate, @BeforeDelete, or @AfterDelete. Supported models are user, session, account, and verification.
+
+~~~~ts
+import { Injectable } from '@nestjs/common'
+import {
+  AfterCreate,
+  BeforeCreate,
+  DatabaseHook,
+} from '@thallesp/nestjs-better-auth'
+
+@DatabaseHook()
+@Injectable()
+export class UserCreateHook {
+  @BeforeCreate('user')
+  beforeUserCreate(user) {
+    return {
+      data: {
+        ...user,
+        displayName: user.name.trim(),
+      },
+    }
+  }
+
+  @AfterCreate('user')
+  async afterUserCreate(user) {
+    // Use after hooks for side effects such as sending a welcome email.
+  }
+}
+~~~~
+
+Before hooks may return false to abort an operation or { data: ... } to modify data. After hooks are for side effects.
+
+---
+
 ## Common Gotchas
 
-1. **Body parser** - MUST disable in `main.ts` or requests fail
-2. **Global guard** - All routes protected by default; use `@AllowAnonymous()` for public routes
-3. **Hooks config** - `hooks: {}` required in Better Auth config for hook decorators
-4. **WebSocket** - Global guard doesn't apply; manually add `@UseGuards(AuthGuard)`
-5. **Plugin types** - Use `AuthService<typeof auth>` for type-safe plugin method access
-6. **Fastify** - Beta support only; may have issues
-7. **RBAC separation** - Use `@Roles()` for system roles and `@OrgRoles()` for org roles; do not mix assumptions between them
+1. **Body parser** - MUST disable it in `main.ts` or Better Auth requests can fail.
+2. **Raw body** - Configure `bodyParser.rawBody`; `rawBody: true` in `NestFactory.create()` has no effect once Nest parsing is disabled.
+3. **Global guard** - REST and GraphQL are protected by default; use `@AllowAnonymous()` or `@OptionalAuth()` as needed.
+4. **WebSocket** - Add `@UseGuards(AuthGuard)` at the Gateway or Message level.
+5. **Hook config** - `hooks: {}` is required for hook decorators and `databaseHooks: {}` is required for database hook decorators.
+6. **Permission config** - Configure the matching Better Auth admin or organization access-control plugin before using permission decorators.
+7. **Organization context** - `@RequireActiveOrg()`, `@OrgRoles()`, and `@MemberHasPermission()` require an active organization.
+8. **Plugin types** - Use `AuthService<typeof auth>` for type-safe plugin method access.
+9. **Fastify** - Install `qs` for nested URL-encoded parsing with `extended: true`; function-based `trustedOrigins` are not supported by the automatic Fastify CORS fallback.
+10. **Deprecated options** - Prefer `bodyParser.json.enabled`, `bodyParser.urlencoded.enabled`, and `bodyParser.rawBody` over `disableBodyParser` and `enableRawBodyParser`.
 
 ---
 
@@ -308,7 +452,10 @@ import {
   AllowAnonymous,
   OptionalAuth,
   Roles,
+  RequireActiveOrg,
   OrgRoles,
+  UserHasPermission,
+  MemberHasPermission,
 } from '@thallesp/nestjs-better-auth'
 
 // Hooks
@@ -317,6 +464,13 @@ import {
   BeforeHook,
   AfterHook,
   AuthHookContext,
+  DatabaseHook,
+  BeforeCreate,
+  AfterCreate,
+  BeforeUpdate,
+  AfterUpdate,
+  BeforeDelete,
+  AfterDelete,
 } from '@thallesp/nestjs-better-auth'
 ```
 
@@ -326,4 +480,3 @@ import {
 
 - [npm Package](https://www.npmjs.com/package/@thallesp/nestjs-better-auth)
 - [Better Auth Docs](https://www.better-auth.com/docs)
-- [Better Auth MCP Skill](./better-auth-best-practices/SKILL.md)
